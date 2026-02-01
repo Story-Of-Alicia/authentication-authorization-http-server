@@ -23,18 +23,55 @@ const addr = "127.0.0.1:8080"
 const maxUsernameLength = 32
 const maxPasswordLength = 32
 
-type handle struct {
+type server struct {
 	db  *sql.DB
 	ctx context.Context
 	srv *http.Server
 }
 
-func (h *handle) dbCreateTables() error {
+func usernameSanity(val string) bool {
+	if len(val) > maxUsernameLength {
+		return false
+	}
+
+	p, err := regexp.Compile("^\\w+$")
+	if err != nil {
+		panic(err)
+	}
+	return p.MatchString(val)
+}
+
+func passwordSanity(val string) bool {
+	if len(val) > maxPasswordLength {
+		return false
+	}
+
+	p, err := regexp.Compile("^\\S+$")
+	if err != nil {
+		panic(err)
+	}
+	return p.MatchString(val)
+}
+
+func generateToken(size int) string {
+	chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLKMNOPQRSTVWXYZ0123456789"
+	b := make([]byte, size)
+	rand.Read(b)
+
+	for i := range b {
+		b[i] = chars[b[i]%byte(len(chars))]
+	}
+
+	return string(b)
+}
+
+func (h *server) dbPrepare() error {
 	ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 	defer cancel()
 
 	_, err := h.db.ExecContext(ctx,
 		"CREATE TABLE IF NOT EXISTS `users` ("+
+			"email VARCHAR(255) NOT NULL,"+
 			"password varchar(32) NOT NULL,"+
 			"username varchar(32) PRIMARY KEY);",
 	)
@@ -52,10 +89,21 @@ func (h *handle) dbCreateTables() error {
 		return err
 	}
 
+	_, err = h.db.ExecContext(ctx,
+		"CREATE TABLE IF NOT EXISTS `verifications` ("+
+			"token VARCHAR(64) NOT NULL,"+
+			"email VARCHAR(255) NOT NULL,"+
+			"username VARCHAR(32) PRIMARY KEY,"+
+			"expires_at TIMESTAMP);",
+	)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
-func (h *handle) dbInit() error {
+func (h *server) dbConnect() error {
 	db, err := sql.Open("mysql", mysqlDsn)
 	if err != nil {
 		return err
@@ -67,25 +115,10 @@ func (h *handle) dbInit() error {
 
 	h.db = db
 
-	err = h.dbCreateTables()
-	if err != nil {
-		return err
-	}
 	return nil
 }
-func generateToken(size int) string {
-	chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLKMNOPQRSTVWXYZ0123456789"
-	b := make([]byte, size)
-	rand.Read(b)
 
-	for i := range b {
-		b[i] = chars[b[i]%byte(len(chars))]
-	}
-
-	return string(b)
-}
-
-func (h *handle) dbCreateToken(username string) (string, error) {
+func (h *server) dbCreateSession(username string) (string, error) {
 	ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 	defer cancel()
 
@@ -120,7 +153,7 @@ func (h *handle) dbCreateToken(username string) (string, error) {
 	return token, nil
 }
 
-func (h *handle) dbAuthenticateUser(username string, password string) (bool, error) {
+func (h *server) dbAuthenticateUser(username string, password string) (bool, error) {
 	ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 	defer cancel()
 
@@ -138,7 +171,7 @@ func (h *handle) dbAuthenticateUser(username string, password string) (bool, err
 	return exists, nil
 }
 
-func (h *handle) dbUserExists(username string) (bool, error) {
+func (h *server) dbUserExists(username string) (bool, error) {
 	ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 	defer cancel()
 
@@ -152,7 +185,7 @@ func (h *handle) dbUserExists(username string) (bool, error) {
 	return exists, nil
 }
 
-func (h *handle) dbCreateUser(username string, password string) error {
+func (h *server) dbCreateUser(username string, password string) error {
 	ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 	defer cancel()
 
@@ -165,31 +198,7 @@ func (h *handle) dbCreateUser(username string, password string) error {
 	return nil
 }
 
-func usernameSanity(val string) bool {
-	if len(val) > maxUsernameLength {
-		return false
-	}
-
-	p, err := regexp.Compile("^\\w+$")
-	if err != nil {
-		panic(err)
-	}
-	return p.MatchString(val)
-}
-
-func passwordSanity(val string) bool {
-	if len(val) > maxPasswordLength {
-		return false
-	}
-
-	p, err := regexp.Compile("^\\S+$")
-	if err != nil {
-		panic(err)
-	}
-	return p.MatchString(val)
-}
-
-func (h *handle) httpHandleRegister(w http.ResponseWriter, req *http.Request) {
+func (h *server) httpHandleRegister(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -247,7 +256,7 @@ func (h *handle) httpHandleRegister(w http.ResponseWriter, req *http.Request) {
 	return
 }
 
-func (h *handle) httpHandleLogin(w http.ResponseWriter, req *http.Request) {
+func (h *server) httpHandleLogin(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -301,7 +310,7 @@ func (h *handle) httpHandleLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	token, err := h.dbCreateToken(username)
+	token, err := h.dbCreateSession(username)
 	if err != nil {
 		log.Printf("Error while processing login request for username: '%s'\n", username)
 		log.Print(err)
@@ -315,20 +324,32 @@ func (h *handle) httpHandleLogin(w http.ResponseWriter, req *http.Request) {
 	return
 }
 
+func (h *server) httpPrepare() {
+	h.srv = &http.Server{}
+	h.srv.Addr = addr
+
+	http.HandleFunc("/login", h.httpHandleLogin)
+	http.HandleFunc("/register", h.httpHandleRegister)
+}
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	ctx, stop := context.WithCancel(context.Background())
 
-	var h = handle{}
+	var h = server{}
 	h.ctx = ctx
 
-	err := h.dbInit()
+	err := h.dbConnect()
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
-	h.srv = &http.Server{}
-	h.srv.Addr = addr
+	err = h.dbPrepare()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	h.httpPrepare()
 
 	signalHandler := make(chan os.Signal, 3)
 	signal.Notify(signalHandler, os.Interrupt)
@@ -340,16 +361,15 @@ func main() {
 		h.db.Close()
 	}()
 
-	http.HandleFunc("/login", h.httpHandleLogin)
-	http.HandleFunc("/register", h.httpHandleRegister)
-
 	log.Println("server starting")
 
 	err = h.srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
+		log.Println("server stopped")
 		return
 	}
+
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 }
