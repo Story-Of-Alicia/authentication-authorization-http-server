@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -20,9 +21,6 @@ import (
 
 const mysqlDsn = "test:1234qweRty@tcp(127.0.0.1:3306)/test"
 const addr = "127.0.0.1:8080"
-
-const maxUsernameLength = 32
-const maxPasswordLength = 32
 
 const DiscordApi = "https://discord.com/api/v10"
 const ClientId = "1272602862043795586"
@@ -38,7 +36,14 @@ type server struct {
 func generateToken(size int) string {
 	chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLKMNOPQRSTVWXYZ0123456789"
 	b := make([]byte, size)
-	rand.Read(b)
+	r, err := rand.Read(b)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if r != size {
+		log.Fatal("failed to generate random token")
+	}
 
 	for i := range b {
 		b[i] = chars[b[i]%byte(len(chars))]
@@ -140,13 +145,14 @@ func discordGetUsername(secret string, code string) (string, error) {
 		"redirect_uri":  {RedirectUri},
 	}
 
-	response, err = http.PostForm(fmt.Sprintf("%s/oauth2/token", DiscordApi), form)
+	response, err = client.PostForm(fmt.Sprintf("%s/oauth2/token", DiscordApi), form)
 	if err != nil {
 		log.Println(err)
 		return "", err
 	}
 
 	buf, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
 	if err != nil {
 		log.Println(err)
 		return "", err
@@ -188,6 +194,7 @@ func discordGetUsername(secret string, code string) (string, error) {
 	}
 
 	buf, err = io.ReadAll(response.Body)
+	_ = response.Body.Close()
 	if err != nil {
 		log.Println(err)
 		return "", err
@@ -220,6 +227,17 @@ func (h *server) httpHandleCallback(w http.ResponseWriter, req *http.Request) {
 	}
 
 	code := req.URL.Query().Get("code")
+
+	regex, err := regexp.Compile("^[A-z0-9]$")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if !regex.MatchString(code) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	username, err := discordGetUsername(h.secret, code)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -243,9 +261,10 @@ func (h *server) httpPrepare() {
 }
 
 func main() {
+	/* set verbose logging */
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	var h = server{}
 
+	var h = server{}
 	ctx, stop := context.WithCancel(context.Background())
 	h.secret = os.Args[1]
 	h.ctx = ctx
@@ -268,8 +287,8 @@ func main() {
 	go func() {
 		<-signalHandler
 		stop()
-		h.srv.Close()
-		h.db.Close()
+		_ = h.srv.Close()
+		_ = h.db.Close()
 	}()
 
 	log.Println("server starting")
