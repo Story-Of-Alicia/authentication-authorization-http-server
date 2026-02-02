@@ -60,7 +60,7 @@ func (s *server) dbPrepare() error {
 	_, err := s.db.ExecContext(ctx,
 		"CREATE TABLE IF NOT EXISTS `users` ("+
 			"email VARCHAR(255) NOT NULL,"+
-			"password varchar(32) NOT NULL,"+
+			"password_hash varchar(255) NOT NULL,"+
 			"username varchar(32) PRIMARY KEY);",
 	)
 	if err != nil {
