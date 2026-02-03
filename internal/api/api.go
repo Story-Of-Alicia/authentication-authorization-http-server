@@ -13,8 +13,6 @@ type APIServer struct {
 	addr string
 }
 
-
-
 func NewAPIServer(addr string) (APIServer, error) {
 	db, err := database.CreateDb("")
 	if err != nil {
@@ -114,7 +112,9 @@ func (s *APIServer) handleDiscordCallback(w http.ResponseWriter, r *http.Request
 // 		b[i] = chars[b[i]%byte(len(chars))]
 // 	}
 //
-// 	return string(b) }
+// 	return string(b)
+// }
+//
 // func (s *server) dbPrepare() error {
 // 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 // 	defer cancel()
