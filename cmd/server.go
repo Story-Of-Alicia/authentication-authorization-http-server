@@ -15,23 +15,24 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
 
 const DiscordApiURI = "https://discord.com/api/v10"
+const TokenSize = 128
 
 type server struct {
 	db  *sql.DB
 	ctx context.Context
 	srv *http.Server
 
-	secret string
-	id     string
-	dbDsn  string
-	addr   string
-	redir  string
+	discordSecret string
+	discordId     string
+	data          string
+	addr          string
+	oauth2Uri     string
+	forwardUri    string
 }
 
 func generateToken(size int) string {
@@ -53,83 +54,6 @@ func generateToken(size int) string {
 	return string(b)
 }
 
-func (s *server) dbPrepare() error {
-	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-	defer cancel()
-
-	_, err := s.db.ExecContext(ctx,
-		"CREATE TABLE IF NOT EXISTS `users` ("+
-			"email VARCHAR(255) NOT NULL,"+
-			"password varchar(32) NOT NULL,"+
-			"username varchar(32) PRIMARY KEY);",
-	)
-	if err != nil {
-		return err
-	}
-
-	_, err = s.db.ExecContext(ctx,
-		"CREATE TABLE IF NOT EXISTS `sessions` ("+
-			"token VARCHAR(64) NOT NULL,"+
-			"username VARCHAR(32) PRIMARY KEY,"+
-			"expires_at TIMESTAMP);",
-	)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (s *server) dbConnect() error {
-	db, err := sql.Open("mysql", s.dbDsn)
-	if err != nil {
-		return err
-	}
-
-	db.SetConnMaxLifetime(time.Minute * 3)
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(10)
-
-	s.db = db
-
-	return nil
-}
-
-func (s *server) dbCreateSession(username string) (string, error) {
-	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
-	defer cancel()
-
-	token := generateToken(32)
-	expiry := time.Now().Add(time.Hour)
-
-	var exists bool
-	err := s.db.QueryRowContext(ctx,
-		"SELECT EXISTS("+
-			"SELECT 1 FROM `sessions` WHERE `username` = ?)",
-		username,
-	).Scan(&exists)
-
-	if err != nil {
-		return "", err
-	}
-
-	if exists {
-		_, err := s.db.ExecContext(ctx,
-			"UPDATE `sessions` SET `token` = ?, `expires_at` = ? WHERE username = ?", token, expiry, username)
-		if err != nil {
-			return "", err
-		}
-	} else {
-		_, err := s.db.ExecContext(ctx,
-			"INSERT `sessions` (`username`, `token`, `expires_at`) VALUES (?, ?, ?)", username, token, expiry)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	return token, nil
-}
-
 func (s *server) discordGetUsername(code string) (string, error) {
 	client := http.Client{}
 
@@ -141,9 +65,9 @@ func (s *server) discordGetUsername(code string) (string, error) {
 	form := url.Values{
 		"code":          {code},
 		"grant_type":    {"authorization_code"},
-		"client_id":     {s.id},
-		"client_secret": {s.secret},
-		"redirect_uri":  {s.redir},
+		"client_id":     {s.discordId},
+		"client_secret": {s.discordSecret},
+		"redirect_uri":  {s.oauth2Uri},
 	}
 
 	response, err = client.PostForm(fmt.Sprintf("%s/oauth2/token", DiscordApiURI), form)
@@ -162,7 +86,7 @@ func (s *server) discordGetUsername(code string) (string, error) {
 	if response.StatusCode != http.StatusOK {
 		log.Println("bad response status code from oauth2")
 		log.Println(string(buf))
-		return "", err
+		return "", errors.New("bad response from oauth2")
 	}
 
 	err = json.Unmarshal(buf, &payload)
@@ -216,6 +140,55 @@ func (s *server) discordGetUsername(code string) (string, error) {
 	return payload["username"].(string), nil
 }
 
+func (s *server) createSession(username string) (string, error) {
+	filename := fmt.Sprintf("%s/%s.json", s.data, username)
+	var profile map[string]interface{}
+	_, err := os.Stat(filename)
+	if err == nil {
+		/* file exists, read existing contents */
+		b, err := os.ReadFile(filename)
+		if err != nil {
+			log.Println(err)
+			return "", err
+		}
+
+		err = json.Unmarshal(b, &profile)
+		if err != nil {
+			log.Println(err)
+			return "", err
+		}
+	} else if os.IsNotExist(err) {
+		/* file doesn't exist, sensible defaults */
+		profile = map[string]interface{}{
+			"characterUid": 0,
+			"infractions":  make([]string, 0),
+			"name":         username,
+			"token":        "dev",
+		}
+	} else {
+		/* just an error */
+		log.Println(err)
+		return "", err
+	}
+
+	token := generateToken(TokenSize)
+	profile["token"] = token
+
+	buf, err := json.Marshal(profile)
+	if err != nil {
+		log.Println(err)
+		return "", err
+	}
+
+	err = os.WriteFile(filename, buf, 0644)
+	if err != nil {
+		log.Println(err)
+		return "", err
+	}
+
+	return token, nil
+}
+
 func (s *server) httpHandleCallback(w http.ResponseWriter, req *http.Request) {
 	if req.Method != "GET" {
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -245,13 +218,13 @@ func (s *server) httpHandleCallback(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	token, err := s.dbCreateSession(username)
+	token, err := s.createSession(username)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	http.Redirect(w, req, fmt.Sprintf("https://storyofalicia.com/?token=%s", token), http.StatusFound)
+	http.Redirect(w, req, fmt.Sprintf("%s/?token=%s&username=%s", s.forwardUri, token, username), http.StatusFound)
 }
 
 func (s *server) httpPrepare() {
@@ -267,26 +240,29 @@ func (s *server) parseEnv() {
 		k := strings.Split(e, "=")[0]
 		v := strings.Split(e, "=")[1]
 		switch {
-		case k == "CLIENT_SECRET":
-			s.secret = v
-		case k == "CLIENT_ID":
-			s.id = v
-		case k == "DATABASE":
-			s.dbDsn = v
-		case k == "ADDRESS":
+		case k == "DISCORD_CLIENT_SECRET":
+			s.discordSecret = v
+		case k == "DISCORD_CLIENT_ID":
+			s.discordId = v
+		case k == "DATA_DIR":
+			s.data = v
+		case k == "BIND_ADDR":
 			s.addr = v
-		case k == "REDIRECTION":
-			s.redir = v
+		case k == "OAUTH2_URI":
+			s.oauth2Uri = v
+		case k == "FORWARD_URI":
+			s.forwardUri = v
 		}
 	}
 }
 
 /* environment parameters:
- * CLIENT_SECRET -> discord application secret
- * CLIENT_ID -> discord application id
- * DATABASE -> database DSN
- * ADDRESS -> http server bind address
- * REDIRECTION -> oauth2 redirection url
+ * DISCORD_CLIENT_SECRET -> discord application secret
+ * DISCORD_CLIENT_ID -> discord application id
+ * BIND_ADDR -> http server bind address
+ * OAUTH2_URI -> oauth2 redirection uri
+ * FORWARD_URI -> where to forward request upon successful authentication
+ * DATA_DIR    -> where to store user json files
  */
 func main() {
 	/* set verbose logging */
@@ -297,16 +273,6 @@ func main() {
 
 	ctx, stop := context.WithCancel(context.Background())
 	h.ctx = ctx
-
-	err := h.dbConnect()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = h.dbPrepare()
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	h.httpPrepare()
 
@@ -322,7 +288,7 @@ func main() {
 
 	log.Println("server starting")
 
-	err = h.srv.ListenAndServe()
+	err := h.srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		log.Println("server stopped")
 		return

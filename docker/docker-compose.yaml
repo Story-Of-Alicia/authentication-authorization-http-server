@@ -2,13 +2,11 @@ services:
   soaauth:
     image: soaauth
     ports:
-      - "8080:80"
-    environment:      
+      - "8080:8080"
+    environment:
       ADDRESS: "127.0.0.1:8080"
-      CLIENT_ID: ID
-      CLIENT_SECRET: SECRET
-      DATABASE: "test:1234qweRty@tcp(172.17.0.1:3306)/test"
-      REDIRECTION: "http://localhost/api/callback"
-
-
-
+      CLIENT_ID:
+      CLIENT_SECRET:
+      DATA_DIR: "/opt/data/users"
+      OAUTH2_URI: "http://play.storyofalicia.com/callback"
+      FORWARD_URI: "https://storyofalicia.com"
