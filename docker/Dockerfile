@@ -8,7 +8,7 @@ RUN go mod tidy
 RUN go build "cmd/server.go"
 
 FROM ubuntu
-RUN apt-get -y update && apt-get -y install golang
+RUN apt-get -y update && apt-get -y install golang ca-certificates
 
 WORKDIR "/opt/soaauth"
 COPY --from=build "/tmp/output/server" "/opt/soaauth/server"
