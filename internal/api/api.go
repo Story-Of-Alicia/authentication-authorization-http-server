@@ -4,22 +4,23 @@ import (
 	"log"
 	"net/http"
 	"soaauth/internal/database"
+	"soaauth/internal/types"
 )
 
 type APIServer struct {
-	db *database.DB
+	db   *database.DB
 	serv *http.Server
 
 	addr string
 }
 
 func NewAPIServer(addr string) (APIServer, error) {
-	db, err := database.CreateDb("")
+	db, err := database.CreateDb()
 	if err != nil {
 		return APIServer{}, err
 	}
 	return APIServer{
-		db: &db,
+		db:   &db,
 		addr: addr,
 		serv: &http.Server{
 			Addr: addr,
@@ -30,35 +31,21 @@ func NewAPIServer(addr string) (APIServer, error) {
 func (s *APIServer) Serv() {
 	log.Println("Start server at addr: " + s.addr)
 
-	http.HandleFunc("/login", MakeHTTPFunc(s.handleLogin))
-	http.HandleFunc("/register", MakeHTTPFunc(s.handleRegister))
 	http.HandleFunc("/callback", MakeHTTPFunc(s.handleDiscordCallback))
 
 	log.Fatal(s.serv.ListenAndServe())
 }
 
-
-func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) error {
+func (s *APIServer) handleDiscordCallback(w http.ResponseWriter, r *http.Request) *types.APIError {
 	if r.Method != http.MethodGet {
-		return nil
+		return &types.APIError{
+			Code:    http.StatusMethodNotAllowed,
+			Message: "Method not allowed",
+		}
 	}
 
-	return JSONResponse(w, Reponse{
-		Status: http.StatusOK,
-		Message: "success",
-		Data: "Hello world!\n",
-	})
-}
-
-func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
-
-func (s *APIServer) handleDiscordCallback(w http.ResponseWriter, r *http.Request) error {
-	return nil
-}
-
-
 
 // package api
 //

@@ -1,19 +1,20 @@
 package main
 
-
 import (
 	"soaauth/internal/api"
+	"soaauth/internal/config"
 )
 
 
 
 func main() {
-	server, err := api.NewAPIServer(":8081");
+	config := config.GetConfigInstance()
+
+	server, err := api.NewAPIServer(config.Address);
 
 	if err != nil {
 		panic(err)
 	}
-
 
 	server.Serv();
 }
