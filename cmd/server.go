@@ -283,7 +283,6 @@ func main() {
 		<-signalHandler
 		stop()
 		_ = h.srv.Close()
-		_ = h.db.Close()
 	}()
 
 	log.Println("server starting")
