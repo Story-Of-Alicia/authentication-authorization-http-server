@@ -1,18 +1,17 @@
-FROM ubuntu
-RUN apt-get -y update && apt-get -y install golang wget
+FROM ubuntu AS build
+RUN apt-get -y update && apt-get -y install golang git
 
-EXPOSE 8080/tcp
+RUN git clone "https://github.com/Story-Of-Alicia/authentication-authorization-http-server.git" "/tmp/output"
 
-RUN mkdir -p "/tmp/output"
-RUN wget -q "https://github.com/Story-Of-Alicia/authentication-authorization-http-server/archive/refs/tags/RC.tar.gz" -O release.tar.gz
-RUN tar -xf "release.tar.gz" -C "/tmp/output" --strip-components=1
-
-RUN cd "/tmp/output/cmd"
+WORKDIR "/tmp/output"
 RUN go mod tidy
-RUN go build server.go
+RUN go build "cmd/server.go"
 
-RUN mkdir -p "/opt/soaauth/server"
-RUN cp server "/opt/soaauth/server"
+FROM ubuntu
+RUN apt-get -y update && apt-get -y install golang
+
+WORKDIR "/opt/soaauth"
+COPY --from=build "/tmp/output/server" "/opt/soaauth/server"
 RUN chmod a+x "/opt/soaauth/server"
 
 CMD ["/opt/soaauth/server"]
