@@ -2,22 +2,30 @@ package main
 
 import (
 	"log"
-	"soaauth/internal/api"
-	"soaauth/internal/config"
+	"soaauth/internal"
+	"soaauth/internal/providers"
 )
 
-
-
 func main() {
+	/* set verbose logging */
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	config := config.GetConfigInstance()
 
-	server, err := api.NewAPIServer(config.Address);
-	
-
-	if err != nil {
-		panic(err)
+	dc := internal.DiscordClient{
+		ClientID:     "clientID",
+		ClientSecret: "clientSecret",
+		Oauth2URI:    "oauthUri",
 	}
 
-	server.Serv();
+	provider := providers.FlatFileSessionProvider{
+		WorkDir: "/opt/",
+	}
+
+	api := internal.AuthenticationServer{
+		SessionProvider: &provider,
+		DiscordClient:   &dc,
+		RedirectURI:     "https://storyofalicia.com/play",
+		BindAddress:     "0.0.0.0:8080",
+	}
+
+	api.Serve()
 }

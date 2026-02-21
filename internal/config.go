@@ -1,4 +1,4 @@
-package config
+package internal
 
 import (
 	"context"
@@ -6,11 +6,10 @@ import (
 	"github.com/sethvargo/go-envconfig"
 )
 
-
 type DiscordConfig struct {
-	ClientID     string `env:"CLIENT_ID"`
-	ClientSecret string `env:"CLIENT_SECRET"`
-	RedirectUri  string `env:"OAUTH_REDIRECT"`
+	ClientID      string `env:"CLIENT_ID"`
+	ClientSecret  string `env:"CLIENT_SECRET"`
+	RedirectUri   string `env:"OAUTH_REDIRECT"`
 	DiscordApiUri string `env:"DISCORD_API_URI, default=https://discord.com/api/v10"`
 }
 
@@ -35,7 +34,7 @@ func newConfig() *Config {
 }
 
 func GetConfigInstance() *Config {
-	if (configInstance == nil) {
+	if configInstance == nil {
 		configInstance = newConfig()
 	}
 

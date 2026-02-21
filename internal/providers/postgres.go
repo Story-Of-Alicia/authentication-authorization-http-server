@@ -1,9 +1,8 @@
-package database
+package providers
 
 import (
 	"context"
 	"database/sql"
-	"soaauth/internal/config"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -18,10 +17,8 @@ type DB struct {
 	addr string
 }
 
-func CreateDb() (DB, error) {
-	addr := config.GetConfigInstance().DbDSN
-
-	db, err := sql.Open("mysql", addr)
+func CreateDb(dsn string) (DB, error) {
+	db, err := sql.Open("mysql", dsn)
 
 	if err != nil {
 		return DB{}, err
@@ -35,7 +32,7 @@ func CreateDb() (DB, error) {
 
 	return DB{
 		db:     db,
-		addr:   addr,
+		addr:   dsn,
 		ctx:    ctx,
 		Cancel: cancel,
 	}, nil
@@ -47,6 +44,7 @@ func (d *DB) initTables() error {
 
 	_, err := d.db.ExecContext(ctx,
 		"CREATE TABLE IF NOT EXISTS `sessions` ("+
+			"id SERIAL PRIMARY KEY,"+
 			"token VARCHAR(64) NOT NULL,"+
 			"username VARCHAR(32) NOT NULL,"+
 			"expires_at TIMESTAMP);",
@@ -113,7 +111,7 @@ func (d *DB) IsSessionExists(username string) (bool, error) {
 	var exists bool
 
 	err := d.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM session WHERE username = ?)",
+		"SELECT EXISTS(SELECT 1 FROM facade WHERE username = ?)",
 		username).Scan(&exists)
 
 	if err != nil {
