@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"authentication-server/internal/facade"
 	"context"
 	"database/sql"
 	"time"
@@ -8,45 +9,46 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-type DB struct {
-	db *sql.DB
-
+type PostgresSessionProvider struct {
+	db     *sql.DB
 	ctx    context.Context
-	Cancel context.CancelFunc
+	cancel context.CancelFunc
 
-	addr string
+	DSN string
 }
 
-func CreateDb(dsn string) (DB, error) {
-	db, err := sql.Open("mysql", dsn)
+func (p *PostgresSessionProvider) CreateSession(username string) (facade.Session, error) {
+	//TODO implement me
+	panic("implement me")
+}
 
+func (p *PostgresSessionProvider) DeleteSession(username string) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (p *PostgresSessionProvider) Init() error {
+	db, err := sql.Open("mysql", p.DSN)
 	if err != nil {
-		return DB{}, err
+		return err
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
 
 	db.SetConnMaxLifetime(time.Minute * 3)
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
 
-	return DB{
-		db:     db,
-		addr:   dsn,
-		ctx:    ctx,
-		Cancel: cancel,
-	}, nil
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+	return nil
 }
 
-func (d *DB) initTables() error {
-	ctx, cancel := context.WithTimeout(d.ctx, 5*time.Second)
+func (p *PostgresSessionProvider) initTables() error {
+	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
 	defer cancel()
 
-	_, err := d.db.ExecContext(ctx,
+	_, err := p.db.ExecContext(ctx,
 		"CREATE TABLE IF NOT EXISTS `sessions` ("+
-			"id SERIAL PRIMARY KEY,"+
+			"username VARCHAR(32) NOT NULL PRIMARY KEY,"+
 			"token VARCHAR(64) NOT NULL,"+
-			"username VARCHAR(32) NOT NULL,"+
 			"expires_at TIMESTAMP);",
 	)
 
@@ -54,46 +56,16 @@ func (d *DB) initTables() error {
 		return err
 	}
 
-	_, err = d.db.ExecContext(ctx,
-		"CREATE INDEX session_index ON sessions"+
-			"(token, username);")
-
-	if err != nil {
-		return err
-	}
-
-	_, err = d.db.ExecContext(ctx,
-		"CREATE UNIQUE INDEX unique_session_index ON sessions"+
-			"(username);")
-
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
-func (d *DB) DropTables() error {
-	ctx, cancel := context.WithTimeout(d.ctx, 5*time.Second)
-	defer cancel()
-
-	_, err := d.db.ExecContext(ctx,
-		"DROP TABLE sessions;")
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (d *DB) CreateSession(username string, token string) (string, error) {
-	ctx, cancle := context.WithTimeout(d.ctx, 5*time.Second)
+func (p *PostgresSessionProvider) sessionCreate(username string, token string) (string, error) {
+	ctx, cancle := context.WithTimeout(p.ctx, 5*time.Second)
 	defer cancle()
 
 	expiriation := time.Now().Add(time.Hour)
 
-	_, err := d.db.ExecContext(ctx,
+	_, err := p.db.ExecContext(ctx,
 		"INSERT sessions (username, token, expires_at) VALUES (?, ?, ?)",
 		username, token, expiriation)
 
@@ -104,13 +76,13 @@ func (d *DB) CreateSession(username string, token string) (string, error) {
 	return token, nil
 }
 
-func (d *DB) IsSessionExists(username string) (bool, error) {
-	ctx, cancle := context.WithTimeout(d.ctx, 5*time.Second)
-	defer cancle()
+func (p *PostgresSessionProvider) sessionExists(username string) (bool, error) {
+	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
+	defer cancel()
 
 	var exists bool
 
-	err := d.db.QueryRowContext(ctx,
+	err := p.db.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM facade WHERE username = ?)",
 		username).Scan(&exists)
 
@@ -121,13 +93,13 @@ func (d *DB) IsSessionExists(username string) (bool, error) {
 	return exists, nil
 }
 
-func (d *DB) UpdateSession(username string, token string) error {
-	ctx, cancle := context.WithTimeout(d.ctx, 5*time.Second)
-	defer cancle()
+func (p *PostgresSessionProvider) sessionUpdate(username string, token string) error {
+	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
+	defer cancel()
 
 	expiration := time.Now().Add(time.Hour)
 
-	_, err := d.db.ExecContext(ctx,
+	_, err := p.db.ExecContext(ctx,
 		"UPDATE sessions SET token = ?, expires_at = ? WHERE username = ?", token, expiration, username)
 
 	if err != nil {
@@ -137,17 +109,13 @@ func (d *DB) UpdateSession(username string, token string) error {
 	return nil
 }
 
-func (d *DB) DeleteSession(username string) {
-	ctx, cancle := context.WithTimeout(d.ctx, 5*time.Second)
-	defer cancle()
+func (p *PostgresSessionProvider) sessionDelete(username string) {
+	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
+	defer cancel()
 
-	_, err := d.db.ExecContext(ctx, "DELETE FROM sessions WHERE username = ?", username)
+	_, err := p.db.ExecContext(ctx, "DELETE FROM sessions WHERE username = ?", username)
 
 	if err != nil {
 		return
 	}
-}
-
-func (d *DB) CloseConn() error {
-	return d.db.Close()
 }
