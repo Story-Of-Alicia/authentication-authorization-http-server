@@ -22,8 +22,8 @@ type DiscordClient struct {
 	Ctx          context.Context
 }
 
-// FetchUsername Retrieve discord username from oauth2 code
-func (d *DiscordClient) FetchUsername(code string) (string, error) {
+// FetchUserID Retrieve discord id from oauth2 code
+func (d *DiscordClient) FetchUserID(code string) (string, error) {
 	/* if context is canceled, return error */
 	select {
 	default:
@@ -111,11 +111,11 @@ func (d *DiscordClient) FetchUsername(code string) (string, error) {
 		return "", err
 	}
 
-	if payload["username"] == nil {
-		log.Println("missing 'username' field from discord api response")
+	if payload["id"] == nil {
+		log.Println("missing 'id' field from discord api response")
 		log.Println(string(buf))
 		return "", err
 	}
 
-	return payload["username"].(string), nil
+	return payload["id"].(string), nil
 }
