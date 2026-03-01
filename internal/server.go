@@ -57,6 +57,19 @@ func (a *AuthenticationServer) ServeHTTP(writer http.ResponseWriter, request *ht
 		return
 	}
 
+	whitelist := []string{"355314189117554689", "386866465648803841", "98486055170215936", "426468841284173830"}
+	var found bool = false
+	for _, user := range whitelist {
+		if user == userID {
+			found = true
+		}
+	}
+
+	if !found {
+		writer.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	session, err := a.SessionProvider.CreateSession(userID)
 	if err != nil {
 		log.Println("failed to create session:", err)
