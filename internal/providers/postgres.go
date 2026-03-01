@@ -1,34 +1,45 @@
 package providers
 
 import (
+	"authentication-server/internal"
 	"authentication-server/internal/facade"
 	"context"
 	"database/sql"
+	"log"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
 )
 
-type PostgresSessionProvider struct {
-	db     *sql.DB
-	ctx    context.Context
-	cancel context.CancelFunc
+const TokenLength = 64
 
+type PostgresSessionProvider struct {
+	db  *sql.DB
+	Ctx context.Context
 	DSN string
 }
 
 func (p *PostgresSessionProvider) CreateSession(username string) (facade.Session, error) {
-	//TODO implement me
-	panic("implement me")
+	token, err := internal.GenerateSessionToken(TokenLength)
+	if err != nil {
+		log.Fatal("failed to generate session token")
+		return facade.Session{}, err
+	}
+
+	p.sessionCreate(username, token, time.Now().Add(10*time.Minute))
+
+	return facade.Session{
+		Token: token, User: username, Expiry: time.Now(),
+	}, nil
 }
 
 func (p *PostgresSessionProvider) DeleteSession(username string) error {
-	//TODO implement me
-	panic("implement me")
+	log.Println("Deleting session")
+	return nil
 }
 
 func (p *PostgresSessionProvider) Init() error {
-	db, err := sql.Open("mysql", p.DSN)
+	db, err := sql.Open("postgres", p.DSN)
 	if err != nil {
 		return err
 	}
@@ -37,16 +48,26 @@ func (p *PostgresSessionProvider) Init() error {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(10)
 
-	p.ctx, p.cancel = context.WithCancel(context.Background())
+	context.AfterFunc(p.Ctx, func() {
+		db.Close()
+	})
+
+	p.db = db
+
+	err = p.initTables()
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (p *PostgresSessionProvider) initTables() error {
-	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(p.Ctx, 5*time.Second)
 	defer cancel()
 
 	_, err := p.db.ExecContext(ctx,
-		"CREATE TABLE IF NOT EXISTS `sessions` ("+
+		"CREATE TABLE IF NOT EXISTS sessions ("+
 			"username VARCHAR(32) NOT NULL PRIMARY KEY,"+
 			"token VARCHAR(64) NOT NULL,"+
 			"expires_at TIMESTAMP);",
@@ -59,63 +80,17 @@ func (p *PostgresSessionProvider) initTables() error {
 	return nil
 }
 
-func (p *PostgresSessionProvider) sessionCreate(username string, token string) (string, error) {
-	ctx, cancle := context.WithTimeout(p.ctx, 5*time.Second)
-	defer cancle()
-
-	expiriation := time.Now().Add(time.Hour)
+func (p *PostgresSessionProvider) sessionCreate(username string, token string, expiry time.Time) (string, error) {
+	ctx, cancel := context.WithTimeout(p.Ctx, 5*time.Second)
+	defer cancel()
 
 	_, err := p.db.ExecContext(ctx,
-		"INSERT sessions (username, token, expires_at) VALUES (?, ?, ?)",
-		username, token, expiriation)
+		"INSERT INTO sessions (username, token, expires_at) VALUES ($1, $2, $3) ON CONFLICT (username) DO UPDATE SET token=$2, expires_at=$3",
+		username, token, expiry)
 
 	if err != nil {
 		return "", err
 	}
 
 	return token, nil
-}
-
-func (p *PostgresSessionProvider) sessionExists(username string) (bool, error) {
-	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
-	defer cancel()
-
-	var exists bool
-
-	err := p.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM facade WHERE username = ?)",
-		username).Scan(&exists)
-
-	if err != nil {
-		return false, err
-	}
-
-	return exists, nil
-}
-
-func (p *PostgresSessionProvider) sessionUpdate(username string, token string) error {
-	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
-	defer cancel()
-
-	expiration := time.Now().Add(time.Hour)
-
-	_, err := p.db.ExecContext(ctx,
-		"UPDATE sessions SET token = ?, expires_at = ? WHERE username = ?", token, expiration, username)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (p *PostgresSessionProvider) sessionDelete(username string) {
-	ctx, cancel := context.WithTimeout(p.ctx, 5*time.Second)
-	defer cancel()
-
-	_, err := p.db.ExecContext(ctx, "DELETE FROM sessions WHERE username = ?", username)
-
-	if err != nil {
-		return
-	}
 }

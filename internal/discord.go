@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 const DiscordApiURI = "https://discord.com/api/v10"
@@ -17,10 +19,21 @@ type DiscordClient struct {
 	ClientID     string
 	ClientSecret string
 	Oauth2URI    string
+	Ctx          context.Context
 }
 
 // FetchUsername Retrieve discord username from oauth2 code
 func (d *DiscordClient) FetchUsername(code string) (string, error) {
+	/* if context is canceled, return error */
+	select {
+	default:
+	case <-d.Ctx.Done():
+		return "", d.Ctx.Err()
+	}
+
+	ctx, cancel := context.WithTimeout(d.Ctx, 20*time.Second)
+	defer cancel()
+
 	client := http.Client{}
 
 	var payload map[string]interface{}
@@ -36,6 +49,7 @@ func (d *DiscordClient) FetchUsername(code string) (string, error) {
 		"redirect_uri":  {d.Oauth2URI},
 	}
 
+	/* TODO: use context with this request */
 	response, err = client.PostForm(fmt.Sprintf("%s/oauth2/token", DiscordApiURI), form)
 	if err != nil {
 		log.Println(err)
@@ -68,7 +82,7 @@ func (d *DiscordClient) FetchUsername(code string) (string, error) {
 	}
 
 	token := payload["access_token"].(string)
-	request, err := http.NewRequest("GET", fmt.Sprintf("%s/users/@me", DiscordApiURI), nil)
+	request, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/users/@me", DiscordApiURI), nil)
 	if err != nil {
 		log.Println(err)
 		return "", err
