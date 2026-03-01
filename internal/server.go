@@ -23,6 +23,11 @@ type AuthenticationServer struct {
 }
 
 func (a *AuthenticationServer) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if request.URL.Path != "/" {
+		writer.WriteHeader(http.StatusNotFound)
+		return
+	}
+
 	if request.Method != "GET" {
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 		return
