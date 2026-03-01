@@ -22,6 +22,41 @@ func parseEnv() map[string]string {
 		vars[key] = val
 	}
 
+	_, ok := vars["DISCORD_CLIENT_ID"]
+	if !ok {
+		log.Fatal("DISCORD_CLIENT_ID is not set")
+	}
+
+	_, ok = vars["DISCORD_CLIENT_SECRET"]
+	if !ok {
+		log.Fatal("DISCORD_CLIENT_SECRET is not set")
+	}
+
+	_, ok = vars["DISCORD_OAUTH2_URI"]
+	if !ok {
+		log.Fatal("DISCORD_OAUTH2_URI is not set")
+	}
+
+	_, ok = vars["POSTGRES_DSN"]
+	if !ok {
+		log.Fatal("POSTGRES_DSN is not set")
+	}
+
+	_, ok = vars["REDIRECT_URL"]
+	if !ok {
+		log.Fatal("REDIRECT_URL is not set")
+	}
+
+	_, ok = vars["REDIRECT_URL"]
+	if !ok {
+		log.Fatal("REDIRECT_URL is not set")
+	}
+
+	_, ok = vars["BIND_ADDRESS"]
+	if !ok {
+		log.Fatal("BIND_ADDRESS is not set")
+	}
+
 	return vars
 }
 
